@@ -36,8 +36,8 @@ class KDTree(NeighborsBase, KNeighborsMixin, RadiusNeighborsMixin):
     def __init__(self, n_neighbors=5, radius=1.0, leaf_size=10, metric="l2"):
 
         metric = metric.lower()
-        if metric not in ["l1", "l2"]:
-            raise ValueError('Supported metrics: ["l1", "l2"]')
+        if metric not in ["l1", "l2", "l21"]:
+            raise ValueError('Supported metrics: ["l1", "l2", "l21"]')
 
         if metric == "l2":  # nanoflann uses squared distances
             radius = radius ** 2
@@ -149,8 +149,8 @@ def batched_kneighbors(
         X_query: list of np.ndarray
     """
     metric = metric.lower()
-    if metric not in ["l1", "l2"]:
-        raise ValueError('Supported metrics: ["l1", "l2"]')
+    if metric not in ["l1", "l2", "l21"]:
+        raise ValueError('Supported metrics: ["l1", "l2", "l21"]')
     for x in X_index:
         _check_arg(x)
     for x in X_query:

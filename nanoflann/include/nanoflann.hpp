@@ -373,7 +373,7 @@ struct L1_Adaptor {
   L1_Adaptor(const DataSource &_data_source) : data_source(_data_source) {}
 
   inline DistanceType evalMetric(const T *a, const size_t b_idx, size_t size,
-                                 DistanceType worst_dist = -1) const {
+                                 DistanceType worst_dist) const {
     DistanceType result = DistanceType();
     const T *last = a + size;
     const T *lastgroup = last - 3;
@@ -394,6 +394,32 @@ struct L1_Adaptor {
       if ((worst_dist > 0) && (result > worst_dist)) {
         return result;
       }
+    }
+    /* Process last 0-3 components.  Not needed for standard vector lengths. */
+    while (a < last) {
+      result += std::abs(*a++ - data_source.kdtree_get_pt(b_idx, d++));
+    }
+    return result;
+  }
+
+  inline DistanceType evalMetric(const T *a, const size_t b_idx, size_t size) const {
+    DistanceType result = DistanceType();
+    const T *last = a + size;
+    const T *lastgroup = last - 3;
+    size_t d = 0;
+
+    /* Process 4 items with each loop for efficiency. */
+    while (a < lastgroup) {
+      const DistanceType diff0 =
+          std::abs(a[0] - data_source.kdtree_get_pt(b_idx, d++));
+      const DistanceType diff1 =
+          std::abs(a[1] - data_source.kdtree_get_pt(b_idx, d++));
+      const DistanceType diff2 =
+          std::abs(a[2] - data_source.kdtree_get_pt(b_idx, d++));
+      const DistanceType diff3 =
+          std::abs(a[3] - data_source.kdtree_get_pt(b_idx, d++));
+      result += diff0 + diff1 + diff2 + diff3;
+      a += 4;
     }
     /* Process last 0-3 components.  Not needed for standard vector lengths. */
     while (a < last) {
@@ -424,7 +450,7 @@ struct L2_Adaptor {
   L2_Adaptor(const DataSource &_data_source) : data_source(_data_source) {}
 
   inline DistanceType evalMetric(const T *a, const size_t b_idx, size_t size,
-                                 DistanceType worst_dist = -1) const {
+                                 DistanceType worst_dist) const {
     DistanceType result = DistanceType();
     const T *last = a + size;
     const T *lastgroup = last - 3;
@@ -441,6 +467,29 @@ struct L2_Adaptor {
       if ((worst_dist > 0) && (result > worst_dist)) {
         return result;
       }
+    }
+    /* Process last 0-3 components.  Not needed for standard vector lengths. */
+    while (a < last) {
+      const DistanceType diff0 = *a++ - data_source.kdtree_get_pt(b_idx, d++);
+      result += diff0 * diff0;
+    }
+    return result;
+  }
+
+  inline DistanceType evalMetric(const T *a, const size_t b_idx, size_t size) const {
+    DistanceType result = DistanceType();
+    const T *last = a + size;
+    const T *lastgroup = last - 3;
+    size_t d = 0;
+
+    /* Process 4 items with each loop for efficiency. */
+    while (a < lastgroup) {
+      const DistanceType diff0 = a[0] - data_source.kdtree_get_pt(b_idx, d++);
+      const DistanceType diff1 = a[1] - data_source.kdtree_get_pt(b_idx, d++);
+      const DistanceType diff2 = a[2] - data_source.kdtree_get_pt(b_idx, d++);
+      const DistanceType diff3 = a[3] - data_source.kdtree_get_pt(b_idx, d++);
+      result += diff0 * diff0 + diff1 * diff1 + diff2 * diff2 + diff3 * diff3;
+      a += 4;
     }
     /* Process last 0-3 components.  Not needed for standard vector lengths. */
     while (a < last) {
@@ -472,8 +521,7 @@ struct L2_Simple_Adaptor {
   L2_Simple_Adaptor(const DataSource &_data_source)
       : data_source(_data_source) {}
 
-  inline DistanceType evalMetric(const T *a, const size_t b_idx,
-                                 size_t size) const {
+  inline DistanceType evalMetric(const T *a, const size_t b_idx, size_t size) const {
     DistanceType result = DistanceType();
     for (size_t i = 0; i < size; ++i) {
       const DistanceType diff = a[i] - data_source.kdtree_get_pt(b_idx, i);
@@ -503,8 +551,7 @@ struct SO2_Adaptor {
 
   SO2_Adaptor(const DataSource &_data_source) : data_source(_data_source) {}
 
-  inline DistanceType evalMetric(const T *a, const size_t b_idx,
-                                 size_t size) const {
+  inline DistanceType evalMetric(const T *a, const size_t b_idx, size_t size) const {
     return accum_dist(a[size - 1], data_source.kdtree_get_pt(b_idx, size - 1),
                       size - 1);
   }
@@ -571,9 +618,32 @@ struct L21_MD_Adaptor {
   L21_MD_Adaptor(const DataSource &_data_source)
       : data_source(_data_source) {}
 
-  inline DistanceType evalMetric(const T *a, const AccessorType b_idx,
-                                 size_t size,
-                                 DistanceType worst_dist = -1) const {
+  inline DistanceType evalMetric(const T *a, const AccessorType b_idx, size_t size,
+                                 DistanceType worst_dist) const {
+    DistanceType result = DistanceType();
+    size_t d = 0;
+
+    // if (size%M_DIM != 0)
+    //   throw std::runtime_error("Error: 'dimensionality' must be a multiple of M_DIM");
+
+    /* Process 4 items with each loop for efficiency. */
+    for (size_t i = 0; i < size; i += M_DIM){
+      DistanceType result_m = DistanceType();
+      for (size_t m = 0; m < M_DIM; m++){
+        const DistanceType diff = a[d] - data_source.kdtree_get_pt(b_idx, d);
+        result_m += diff*diff;
+        ++d;
+      }
+      result += std::sqrt(result_m);
+
+      if ((worst_dist > 0) && (result > worst_dist)) {
+        return result;
+      }
+    }
+    return result;
+  }
+
+  inline DistanceType evalMetric(const T *a, const AccessorType b_idx, size_t size) const {
     DistanceType result = DistanceType();
     size_t d = 0;
 
@@ -619,9 +689,31 @@ struct L21_MD_Adaptor {
 
   L21_3D_Adaptor(const DataSource &_data_source) : data_source(_data_source) {}
 
-  inline DistanceType evalMetric(const T *a, const AccessorType b_idx,
-                                 size_t size,
-                                 DistanceType worst_dist = -1) const {
+  inline DistanceType evalMetric(const T *a, const AccessorType b_idx, size_t size,
+                                 DistanceType worst_dist) const {
+    DistanceType result = DistanceType();
+    const T *last = a + size;
+    size_t d = 0;
+
+    // if (size%3 != 0)
+    //   throw std::runtime_error("Error: 'dimensionality' must be a multiple of 3");
+
+    /* Process 3 items with each loop for efficiency. */
+    while (a < last) {
+      const DistanceType diff0 = a[0] - data_source.kdtree_get_pt(b_idx, d++);
+      const DistanceType diff1 = a[1] - data_source.kdtree_get_pt(b_idx, d++);
+      const DistanceType diff2 = a[2] - data_source.kdtree_get_pt(b_idx, d++);
+      result += std::sqrt(diff0 * diff0 + diff1 * diff1 + diff2 * diff2);
+      a += 3;
+
+      if ((worst_dist > 0) && (result > worst_dist)) {
+        return result;
+      }
+    }
+    return result;
+  }
+
+  inline DistanceType evalMetric(const T *a, const AccessorType b_idx, size_t size) const {
     DistanceType result = DistanceType();
     const T *last = a + size;
     size_t d = 0;
@@ -649,34 +741,57 @@ struct L21_MD_Adaptor {
 template <class T, class DataSource, typename _DistanceType = T,
           typename AccessorType = uint32_t>
 struct L21_3D_Adaptor_row {
- typedef T ElementType;
- typedef _DistanceType DistanceType;
+  typedef T ElementType;
+  typedef _DistanceType DistanceType;
 
- const DataSource &data_source;
+  const DataSource &data_source;
 
- L21_3D_Adaptor_row(const DataSource &_data_source) : data_source(_data_source) {}
+  L21_3D_Adaptor_row(const DataSource &_data_source) : data_source(_data_source) {}
 
- inline DistanceType evalMetric(const T *a, const AccessorType b_idx,
-                                size_t size,
-                                DistanceType worst_dist = -1) const {
-   DistanceType result = T();
-   const T* vals = data_source.kdtree_get_row(b_idx);
-   const T* last = a + size;
+  inline DistanceType evalMetric(const T *a, const AccessorType b_idx, size_t size,
+                                 DistanceType worst_dist) const {
+    DistanceType result = T();
+    const T* vals = data_source.kdtree_get_row(b_idx);
+    const T* last = a + size;
 
-   // if (size%3 != 0)
-   //   throw std::runtime_error("Error: 'dimensionality' must be a multiple of 3");
+    // if (size%3 != 0)
+    //   throw std::runtime_error("Error: 'dimensionality' must be a multiple of 3");
 
-   /* Process 3 items with each loop for efficiency. */
-   while (a < last) {
-     const DistanceType diff0 = a[0] - vals[0];
-     const DistanceType diff1 = a[1] - vals[1];
-     const DistanceType diff2 = a[2] - vals[2];
-     result += std::sqrt(diff0 * diff0 + diff1 * diff1 + diff2 * diff2);
-     a += 3;
-     vals +=3;
-   }
-   return result;
- }
+    /* Process 3 items with each loop for efficiency. */
+    while (a < last) {
+      const DistanceType diff0 = a[0] - vals[0];
+      const DistanceType diff1 = a[1] - vals[1];
+      const DistanceType diff2 = a[2] - vals[2];
+      result += std::sqrt(diff0 * diff0 + diff1 * diff1 + diff2 * diff2);
+
+      if ((worst_dist > 0) && (result > worst_dist)) {
+        return result;
+      }
+      a += 3;
+      vals +=3;
+    }
+    return result;
+  }
+
+  inline DistanceType evalMetric(const T *a, const AccessorType b_idx, size_t size) const {
+    DistanceType result = T();
+    const T* vals = data_source.kdtree_get_row(b_idx);
+    const T* last = a + size;
+
+    // if (size%3 != 0)
+    //   throw std::runtime_error("Error: 'dimensionality' must be a multiple of 3");
+
+    /* Process 3 items with each loop for efficiency. */
+    while (a < last) {
+      const DistanceType diff0 = a[0] - vals[0];
+      const DistanceType diff1 = a[1] - vals[1];
+      const DistanceType diff2 = a[2] - vals[2];
+      result += std::sqrt(diff0 * diff0 + diff1 * diff1 + diff2 * diff2);
+      a += 3;
+      vals +=3;
+    }
+    return result;
+  }
 
  template <typename U, typename V>
  inline DistanceType accum_dist(const U a, const V b, const size_t) const {

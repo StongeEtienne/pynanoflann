@@ -301,6 +301,7 @@ class KDTree {
   void radius_neighbors_idx_dists(f_numpy_array_t, num_t radius = 1.0f);
   void radius_neighbors_indptr_dists(f_numpy_array_t, num_t radius = 1.0f);
   void radius_neighbors_coo_dists(f_numpy_array_t, num_t radius = 1.0f);
+  void radius_neighbors_coo_dists_multithreaded(f_numpy_array_t, num_t radius = 1.0f, size_t nThreads = 1);
   std::pair<std::vector<std::vector<num_t>>, vvi>
   radius_neighbors_multithreaded(f_numpy_array_t, num_t radius = 1.0f,
                                  size_t nThreads = 1);
@@ -533,6 +534,73 @@ void KDTree<num_t>::radius_neighbors_coo_dists(
 }
 
 template <typename num_t>
+void KDTree<num_t>::radius_neighbors_coo_dists_multithreaded(
+    f_numpy_array_t array, num_t radius, size_t nThreads) {
+  // reset search results
+  this->m_ids_row.clear();
+  this->m_ids_col.clear();
+
+  const auto mat = array.template unchecked<2>();
+  const num_t *query_data = mat.data(0, 0);
+  const size_t n_points = mat.shape(0);
+  const size_t dim = mat.shape(1);
+
+  const num_t search_radius = static_cast<num_t>(radius);
+  std::vector<std::pair<size_t, num_t>> ret_matches;
+
+  std::vector<size_t> nb_matches(n_points);
+  std::vector<std::vector<size_t>> results_cols(n_points);
+  std::vector<std::vector<num_t>> results_dists(n_points);
+
+
+  auto searchBatch = [&](size_t startIdx, size_t endIdx) {
+    std::vector<std::pair<size_t, num_t>> ret_matches;
+    for (size_t i = startIdx; i < endIdx; i++) {
+      const size_t nb_match = index->radiusSearch(&query_data[i * dim], search_radius, ret_matches, nanoflann::SearchParams());
+
+      nb_matches[i] = nb_match;
+      results_cols[i].resize(nb_match);
+      results_dists[i].resize(nb_match);
+      for (size_t j = 0; j < nb_match; j++) {
+        results_cols[i][j] = ret_matches[j].first;
+        results_dists[i][j] = ret_matches[j].second;
+      }
+    }
+  };
+
+  std::vector<std::thread> threadPool;
+  size_t batchSize = std::ceil(static_cast<float>(n_points) / nThreads);
+  for (size_t i = 0; i < nThreads; i++) {
+    size_t startIdx = i * batchSize;
+    size_t endIdx = (i + 1) * batchSize;
+    endIdx = std::min(endIdx, n_points);
+    threadPool.push_back(std::thread(searchBatch, startIdx, endIdx));
+  }
+  for (auto &t : threadPool) {
+    t.join();
+  }
+  // Rejoin data in a single vector
+  const size_t total_nb_match = std::accumulate(nb_matches.begin(), nb_matches.end(), 0);
+
+  this->m_ids_row.resize(total_nb_match);
+  this->m_ids_col.resize(total_nb_match);
+  this->m_dists.resize(total_nb_match);
+
+  size_t d = 0;
+  for (size_t i = 0; i < n_points; ++i) {
+    const size_t nb_match = nb_matches[i];
+    for (size_t j = 0; j < nb_match; ++j) {
+      this->m_ids_row[d] = i;
+      this->m_ids_col[d] = results_cols[i][j];
+      this->m_dists[d] = results_dists[i][j];
+      ++d;
+    }
+  }
+
+  return;
+}
+
+template <typename num_t>
 std::pair<std::vector<std::vector<num_t>>, vvi>
 KDTree<num_t>::radius_neighbors_multithreaded(f_numpy_array_t array,
                                               num_t radius, size_t nThreads) {
@@ -708,6 +776,7 @@ PYBIND11_MODULE(nanoflann_ext, m) {
       .def("radius_neighbors_idx_dists", &KDTree<float>::radius_neighbors_idx_dists)
       .def("radius_neighbors_indptr_dists", &KDTree<float>::radius_neighbors_indptr_dists)
       .def("radius_neighbors_coo_dists", &KDTree<float>::radius_neighbors_coo_dists)
+      .def("radius_neighbors_coo_dists_multithreaded", &KDTree<float>::radius_neighbors_coo_dists_multithreaded)
       .def("radius_neighbors_multithreaded",
            &KDTree<float>::radius_neighbors_multithreaded)
       .def("save_index", &KDTree<float>::save_index)
@@ -726,6 +795,7 @@ PYBIND11_MODULE(nanoflann_ext, m) {
       .def("radius_neighbors_idx_dists", &KDTree<double>::radius_neighbors_idx_dists)
       .def("radius_neighbors_indptr_dists", &KDTree<double>::radius_neighbors_indptr_dists)
       .def("radius_neighbors_coo_dists", &KDTree<double>::radius_neighbors_coo_dists)
+      .def("radius_neighbors_coo_dists_multithreaded", &KDTree<double>::radius_neighbors_coo_dists_multithreaded)
       .def("radius_neighbors_multithreaded",
            &KDTree<double>::radius_neighbors_multithreaded)
       .def("save_index", &KDTree<double>::save_index)

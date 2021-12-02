@@ -52,7 +52,7 @@
 #include <cassert>
 #include <cmath>   // for abs()
 #include <cstdio>  // for fwrite()
-#include <cstdlib> // for abs()
+//#include <cstdlib> // for abs()
 #include <functional>
 #include <limits> // std::reference_wrapper
 #include <stdexcept>
@@ -86,6 +86,7 @@ template <typename T> T pi_const() {
 #define SQRT3_INV 0.577350269
 
 const float SQRTM_INV=1.0/std::sqrt((float)M_DIM);
+
 
 /**
  * Traits if object is resizable and assignable (typically has a resize | assign
@@ -276,6 +277,41 @@ public:
                                  IndexDist_Sorter());
     return *it;
   }
+};
+
+/**
+ * A result-set class used when performing a radius based search.
+ */
+template <typename _DistanceType, typename _IndexType = size_t>
+class RadiusResultSetIdx {
+public:
+  typedef _DistanceType DistanceType;
+  typedef _IndexType IndexType;
+
+  const DistanceType radius;
+
+  std::vector<IndexType> &m_indices;
+
+  inline RadiusResultSetIdx(
+      DistanceType radius_,
+      std::vector<IndexType> &indices)
+      : radius(radius_), m_indices(indices) {
+    init();
+  }
+
+  inline void init() { clear(); }
+  inline void clear() { m_indices.clear(); }
+
+  inline size_t size() const { return m_indices.size(); }
+
+  inline bool full() const { return true; }
+  inline bool addPoint(DistanceType dist, IndexType index) {
+    if (dist < radius)
+      m_indices.push_back(index);
+    return true;
+  }
+
+  inline DistanceType worstDist() const { return radius; }
 };
 
 /** @} */
@@ -610,6 +646,44 @@ struct L21_MD_Adaptor {
   }
 };
 
+template <class T, class DataSource, typename _DistanceType = T,
+          typename AccessorType = uint32_t>
+struct L21_3D_Adaptor_row {
+ typedef T ElementType;
+ typedef _DistanceType DistanceType;
+
+ const DataSource &data_source;
+
+ L21_3D_Adaptor_row(const DataSource &_data_source) : data_source(_data_source) {}
+
+ inline DistanceType evalMetric(const T *a, const AccessorType b_idx,
+                                size_t size,
+                                DistanceType worst_dist = -1) const {
+   DistanceType result = T();
+   const T* vals = data_source.kdtree_get_row(b_idx);
+   const T* last = a + size;
+
+   // if (size%3 != 0)
+   //   throw std::runtime_error("Error: 'dimensionality' must be a multiple of 3");
+
+   /* Process 3 items with each loop for efficiency. */
+   while (a < last) {
+     const DistanceType diff0 = a[0] - vals[0];
+     const DistanceType diff1 = a[1] - vals[1];
+     const DistanceType diff2 = a[2] - vals[2];
+     result += std::sqrt(diff0 * diff0 + diff1 * diff1 + diff2 * diff2);
+     a += 3;
+     vals +=3;
+   }
+   return result;
+ }
+
+ template <typename U, typename V>
+ inline DistanceType accum_dist(const U a, const V b, const size_t) const {
+   return std::abs((a - b) * 0.57735);
+ }
+};
+
 /** Metaprogramming helper traits class for the L1 (Manhattan) metric */
 struct metric_L1 : public Metric {
   template <class T, class DataSource> struct traits {
@@ -655,6 +729,11 @@ struct metric_L21_3D : public Metric {
   };
 };
 
+struct metric_L21_3D_row : public Metric {
+  template <class T, class DataSource, typename AccessorType = uint32_t> struct traits {
+    typedef L21_3D_Adaptor_row<T, DataSource, T, AccessorType> distance_t;
+  };
+};
 /** @} */
 
 /** @addtogroup param_grp Parameter structs
@@ -1417,6 +1496,15 @@ public:
     return resultSet.size();
   }
 
+  size_t radiusSearchIdx(const ElementType *query_point, const DistanceType &radius,
+              std::vector<IndexType> &IndicesDists,
+              const SearchParams &searchParams) const {
+   RadiusResultSetIdx<DistanceType, IndexType> resultSet(radius, IndicesDists);
+   const size_t nFound =
+       radiusSearchCustomCallback(query_point, resultSet, searchParams);
+   return nFound;
+  }
+
   /** @} */
 
 public:
@@ -1469,8 +1557,7 @@ public:
       // count_leaf += (node->lr.right-node->lr.left);  // Removed since was
       // neither used nor returned to the user.
       DistanceType worst_dist = result_set.worstDist();
-      for (IndexType i = node->node_type.lr.left; i < node->node_type.lr.right;
-           ++i) {
+      for (IndexType i = node->node_type.lr.left; i < node->node_type.lr.right; ++i) {
         const IndexType index = BaseClassRef::vind[i]; // reorder... : i;
         DistanceType dist = distance.evalMetric(
             vec, index, (DIM > 0 ? DIM : BaseClassRef::dim));
@@ -2135,6 +2222,11 @@ public:
   // Returns the dim'th component of the idx'th point in the class:
   inline num_t kdtree_get_pt(const IndexType idx, size_t dim) const {
     return m_data_matrix.get().coeff(idx, IndexType(dim));
+  }
+
+
+  inline const num_t* kdtree_get_row(const IndexType idx) const {
+    return &m_data_matrix(idx*DIM);
   }
 
   // Optional bounding-box computation: return false to default to a standard

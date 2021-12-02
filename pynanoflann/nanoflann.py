@@ -58,10 +58,12 @@ class KDTree(NeighborsBase, KNeighborsMixin, RadiusNeighborsMixin):
             self.index = nanoflann_ext.KDTree32(
                 self.n_neighbors, self.leaf_size, self.metric, self.radius
             )
+            print("KDTree32")
         else:
             self.index = nanoflann_ext.KDTree64(
                 self.n_neighbors, self.leaf_size, self.metric, self.radius
             )
+            print("KDTree64")
 
         if X.shape[1] > 64:
             warnings.warn(

@@ -290,62 +290,129 @@ class KDTree {
 
   ~KDTree() { delete index; }
 
-  std::pair<f_numpy_array_t, i_numpy_array_t> kneighbors(f_numpy_array_t array,
-                                                         size_t n_neighbors);
+  // kneighbors search
+  std::pair<f_numpy_array_t, i_numpy_array_t> kneighbors(f_numpy_array_t array, size_t n_neighbors);
   std::pair<f_numpy_array_t, i_numpy_array_t> kneighbors_multithreaded(
       f_numpy_array_t array, size_t n_neighbors, size_t nThreads = 1);
 
-  std::pair<std::vector<std::vector<num_t>>, vvi> radius_neighbors(
-      f_numpy_array_t, num_t radius = 1.0f);
+
+  // radius search
   void radius_neighbors_idx(f_numpy_array_t, num_t radius = 1.0f);
   void radius_neighbors_idx_dists(f_numpy_array_t, num_t radius = 1.0f);
-  void radius_neighbors_indptr_dists(f_numpy_array_t, num_t radius = 1.0f);
-  void radius_neighbors_coo_dists(f_numpy_array_t, num_t radius = 1.0f);
-  void radius_neighbors_coo_dists_multithreaded(f_numpy_array_t, num_t radius = 1.0f, size_t nThreads = 1);
-  std::pair<std::vector<std::vector<num_t>>, vvi>
-  radius_neighbors_multithreaded(f_numpy_array_t, num_t radius = 1.0f,
-                                 size_t nThreads = 1);
+  void radius_neighbors_idx_multithreaded(
+      f_numpy_array_t array, num_t radius = 1.0f, size_t nThreads = 1);
+  void radius_neighbors_idx_dists_multithreaded(
+      f_numpy_array_t array, num_t radius = 1.0f, size_t nThreads = 1);
 
   int save_index(const std::string &path);
 
   AbstractKDTree<num_t> *index;
 
+  // result getter
+  i_numpy_array_t getResultLenghts();
+  i_numpy_array_t getResultIndicesPtr();
   i_numpy_array_t getResultIndicesRow();
   i_numpy_array_t getResultIndicesCol();
-  pybind11::array_t<num_t, pybind11::array::c_style | pybind11::array::forcecast> getResultDists();
+  f_numpy_array_t getResultDists();
 
  private:
-  size_t n_neighbors, leaf_size;
+  size_t n_neighbors;
+  size_t leaf_size;
   std::string metric;
   num_t radius;
 
-  std::vector<int> m_ids_row;
-  std::vector<int> m_ids_col;
-  std::vector<num_t> m_dists;
+  std::vector<size_t> m_nbmatches;
+  std::vector<std::vector<size_t>> m_indices;
+  std::vector<std::vector<num_t>> m_dists;
 };
 
 
+template <typename num_t>
+i_numpy_array_t KDTree<num_t>::getResultLenghts(){
+  return pybind11::array(this->m_nbmatches.size(), this->m_nbmatches.data());
+}
+
 // ESO hacky way to get results without copy in python
 template <typename num_t>
+i_numpy_array_t KDTree<num_t>::getResultIndicesPtr(){
+  const size_t n_points = this->m_nbmatches.size();
+  std::vector<size_t>* seq_ptr = new std::vector<size_t>(n_points + 1);
+
+  // reformating in a single array
+  (*seq_ptr)[0] = 0;
+  for (size_t i = 0; i < n_points; ++i) {
+    (*seq_ptr)[i+1] = (*seq_ptr)[i] + this->m_nbmatches[i];
+  }
+
+  auto capsule = pybind11::capsule(seq_ptr, [](void* p) { delete reinterpret_cast<std::vector<size_t>*>(p); });
+  return pybind11::array(seq_ptr->size(),seq_ptr->data(), capsule);
+}
+
+template <typename num_t>
 i_numpy_array_t KDTree<num_t>::getResultIndicesRow(){
-  std::vector<int>* seq_ptr = new std::vector<int>(std::move(this->m_ids_row));
-  auto capsule = pybind11::capsule(seq_ptr, [](void* p) { delete reinterpret_cast<std::vector<int>*>(p); });
+  const size_t n_points = this->m_nbmatches.size();
+  const size_t total_nb_match = std::accumulate(this->m_nbmatches.begin(), this->m_nbmatches.end(), 0);
+  std::vector<size_t>* seq_ptr = new std::vector<size_t>(total_nb_match);
+  size_t d = 0;
+
+  // reformating in a single array
+  for (size_t i = 0; i < n_points; ++i) {
+    const size_t nb_match = this->m_nbmatches[i];
+    for (size_t j = 0; j < nb_match; ++j) {
+      (*seq_ptr)[d++] = i;
+    }
+  }
+
+  auto capsule = pybind11::capsule(seq_ptr, [](void* p) { delete reinterpret_cast<std::vector<size_t>*>(p); });
   return pybind11::array(seq_ptr->size(),seq_ptr->data(), capsule);
 }
 
 template <typename num_t>
 i_numpy_array_t KDTree<num_t>::getResultIndicesCol(){
-  std::vector<int>* seq_ptr = new std::vector<int>(std::move(this->m_ids_col));
-  auto capsule = pybind11::capsule(seq_ptr, [](void* p) { delete reinterpret_cast<std::vector<int>*>(p); });
+  const size_t n_points = this->m_nbmatches.size();
+  const size_t total_nb_match = std::accumulate(this->m_nbmatches.begin(), this->m_nbmatches.end(), 0);
+  std::vector<size_t>* seq_ptr = new std::vector<size_t>(total_nb_match);
+  size_t d = 0;
+
+  // reformating in a single array
+  for (size_t i = 0; i < n_points; ++i) {
+    const size_t nb_match = this->m_nbmatches[i];
+    for (size_t j = 0; j < nb_match; ++j) {
+      (*seq_ptr)[d++] = this->m_indices[i][j];
+    }
+  }
+
+  auto capsule = pybind11::capsule(seq_ptr, [](void* p) { delete reinterpret_cast<std::vector<size_t>*>(p); });
   return pybind11::array(seq_ptr->size(),seq_ptr->data(), capsule);
 }
 
+
 template <typename num_t>
 pybind11::array_t<num_t, pybind11::array::c_style | pybind11::array::forcecast> KDTree<num_t>::getResultDists(){
-  std::vector<num_t>* seq_ptr = new std::vector<num_t>(std::move(this->m_dists));
+  const size_t n_points = this->m_nbmatches.size();
+  const size_t total_nb_match = std::accumulate(this->m_nbmatches.begin(), this->m_nbmatches.end(), 0);
+  std::vector<num_t>* seq_ptr = new std::vector<num_t>(total_nb_match);
+  size_t d = 0;
+
+  // reformating in a single array
+  for (size_t i = 0; i < n_points; ++i) {
+    const size_t nb_match = this->m_nbmatches[i];
+    for (size_t j = 0; j < nb_match; ++j) {
+      (*seq_ptr)[d++] = this->m_dists[i][j];
+    }
+  }
+
   auto capsule = pybind11::capsule(seq_ptr, [](void* p) { delete reinterpret_cast<std::vector<num_t>*>(p); });
   return pybind11::array(seq_ptr->size(),seq_ptr->data(), capsule);
 }
+
+//
+// template <typename num_t>
+// pybind11::array_t<num_t, pybind11::array::c_style | pybind11::array::forcecast> KDTree<num_t>::getResultDists(){
+//   std::vector<num_t>* seq_ptr = new std::vector<num_t>(std::move(this->m_dists));
+//   auto capsule = pybind11::capsule(seq_ptr, [](void* p) { delete reinterpret_cast<std::vector<num_t>*>(p); });
+//   return pybind11::array(seq_ptr->size(),seq_ptr->data(), capsule);
+// }
 
 
 template <typename num_t>
@@ -357,9 +424,7 @@ KDTree<num_t>::KDTree(size_t n_neighbors, size_t leaf_size, std::string metric,
       radius(radius) {}
 
 template <typename num_t>
-std::pair<pybind11::array_t<num_t, pybind11::array::c_style |
-                                       pybind11::array::forcecast>,
-          i_numpy_array_t>
+std::pair<pybind11::array_t<num_t, pybind11::array::c_style | pybind11::array::forcecast>, i_numpy_array_t>
 KDTree<num_t>::kneighbors(f_numpy_array_t array, size_t n_neighbors) {
   auto mat = array.template unchecked<2>();
   const num_t *query_data = mat.data(0, 0);
@@ -387,70 +452,28 @@ KDTree<num_t>::kneighbors(f_numpy_array_t array, size_t n_neighbors) {
 }
 
 template <typename num_t>
-std::pair<std::vector<std::vector<num_t>>, vvi> KDTree<num_t>::radius_neighbors(
-    f_numpy_array_t array, num_t radius) {
-  auto mat = array.template unchecked<2>();
-  const num_t *query_data = mat.data(0, 0);
-  size_t n_points = mat.shape(0);
-  size_t dim = mat.shape(1);
-
-  const num_t search_radius = static_cast<num_t>(radius);
-  std::vector<std::vector<size_t>> result_idxs(n_points);
-  std::vector<std::vector<num_t>> result_dists(n_points);
-
-  std::vector<std::pair<size_t, num_t>> ret_matches;
-
-  for (size_t i = 0; i < n_points; i++) {
-    const num_t *query_point = &query_data[i * dim];
-    const size_t nMatches = index->radiusSearch(
-        &query_point[0], search_radius, ret_matches, nanoflann::SearchParams());
-    for (size_t j = 0; j < nMatches; j++) {
-      result_idxs[i].push_back(ret_matches[j].first);
-      result_dists[i].push_back(ret_matches[j].second);
-    }
-  }
-  // TODO Copy will be made
-  return std::make_pair(result_dists, result_idxs);
-}
-
-template <typename num_t>
 void KDTree<num_t>::radius_neighbors_idx(
     f_numpy_array_t array, num_t radius) {
-  // reset search results
-  this->m_ids_row.clear();
-  this->m_ids_col.clear();
-  this->m_dists.clear();
-
   const auto mat = array.template unchecked<2>();
   const num_t *query_data = mat.data(0, 0);
   const size_t n_points = mat.shape(0);
   const size_t dim = mat.shape(1);
 
   const num_t search_radius = static_cast<num_t>(radius);
-  //std::vector<std::vector<size_t>> result_idxs(n_points);
-  //std::vector<std::vector<num_t>> result_dists(n_points);
-  std::vector<size_t> ret_matches;
-  this->m_ids_row.resize(n_points);
+  this->m_nbmatches.resize(n_points);
+  this->m_indices.resize(n_points);
+  this->m_dists.clear();
 
   for (size_t i = 0; i < n_points; i++) {
-    this->m_ids_row[i] = index->radiusSearchIdx(
-        &query_data[i * dim], search_radius, ret_matches, nanoflann::SearchParams());
-    this->m_ids_col.insert(this->m_ids_col.end(),
-      std::make_move_iterator(ret_matches.begin()),
-      std::make_move_iterator(ret_matches.end()));
+    this->m_nbmatches[i] = index->radiusSearchIdx(
+        &query_data[i * dim], search_radius, this->m_indices[i], nanoflann::SearchParams());
   }
   return;
 }
-
 
 template <typename num_t>
 void KDTree<num_t>::radius_neighbors_idx_dists(
     f_numpy_array_t array, num_t radius) {
-  // reset search results
-  this->m_ids_row.clear();
-  this->m_ids_col.clear();
-  this->m_dists.clear();
-
   const auto mat = array.template unchecked<2>();
   const num_t *query_data = mat.data(0, 0);
   const size_t n_points = mat.shape(0);
@@ -458,87 +481,144 @@ void KDTree<num_t>::radius_neighbors_idx_dists(
 
   const num_t search_radius = static_cast<num_t>(radius);
   std::vector<std::pair<size_t, num_t>> ret_matches;
-  this->m_ids_row.resize(n_points);
+  this->m_nbmatches.resize(n_points);
+  this->m_indices.resize(n_points);
+  this->m_dists.resize(n_points);
 
   for (size_t i = 0; i < n_points; i++) {
-    const size_t nMatches = index->radiusSearch(
+    const size_t nb_match = index->radiusSearch(
         &query_data[i * dim], search_radius, ret_matches, nanoflann::SearchParams());
-    this->m_ids_row[i] = nMatches;
-    for (size_t j = 0; j < nMatches; j++) {
-      this->m_ids_col.push_back(ret_matches[j].first);
-      this->m_dists.push_back(ret_matches[j].second);
+    this->m_nbmatches[i] = nb_match;
+
+    this->m_indices[i].resize(nb_match);
+    this->m_dists[i].resize(nb_match);
+    for (size_t j = 0; j < nb_match; j++) {
+      this->m_indices[i][j] = ret_matches[j].first;
+      this->m_dists[i][j] = ret_matches[j].second;
     }
   }
   return;
 }
 
-// to generate CSR matrix
+// // to generate CSR matrix
+// template <typename num_t>
+// void KDTree<num_t>::radius_neighbors_indptr_dists(
+//     f_numpy_array_t array, num_t radius) {
+//   // reset search results
+//   this->m_ids_row.clear();
+//   this->m_ids_col.clear();
+//   this->m_dists.clear();
+//
+//   const auto mat = array.template unchecked<2>();
+//   const num_t *query_data = mat.data(0, 0);
+//   const size_t n_points = mat.shape(0);
+//   const size_t dim = mat.shape(1);
+//
+//   const num_t search_radius = static_cast<num_t>(radius);
+//   std::vector<std::pair<size_t, num_t>> ret_matches;
+//   this->m_ids_row.resize(n_points+1);
+//   this->m_ids_row[0] = 0;
+//
+//   for (size_t i = 0; i < n_points; i++) {
+//     const size_t nMatches = index->radiusSearch(
+//         &query_data[i * dim], search_radius, ret_matches, nanoflann::SearchParams());
+//     this->m_ids_row[i+1] = this->m_ids_row[i] + nMatches;
+//     for (size_t j = 0; j < nMatches; j++) {
+//       this->m_ids_col.push_back(ret_matches[j].first);
+//       this->m_dists.push_back(ret_matches[j].second);
+//     }
+//   }
+//   return;
+// }
+// // to generate COO matrix
+// template <typename num_t>
+// void KDTree<num_t>::radius_neighbors_coo_dists(
+//     f_numpy_array_t array, num_t radius) {
+//   // reset search results
+//   this->m_ids_row.clear();
+//   this->m_ids_col.clear();
+//   this->m_dists.clear();
+//
+//   const auto mat = array.template unchecked<2>();
+//   const num_t *query_data = mat.data(0, 0);
+//   const size_t n_points = mat.shape(0);
+//   const size_t dim = mat.shape(1);
+//
+//   const num_t search_radius = static_cast<num_t>(radius);
+//   std::vector<std::pair<size_t, num_t>> ret_matches;
+//
+//   for (size_t i = 0; i < n_points; i++) {
+//     const size_t nMatches = index->radiusSearch(
+//         &query_data[i * dim], search_radius, ret_matches, nanoflann::SearchParams());
+//     for (size_t j = 0; j < nMatches; j++) {
+//       this->m_ids_row.push_back(i);
+//       this->m_ids_col.push_back(ret_matches[j].first);
+//       this->m_dists.push_back(ret_matches[j].second);
+//     }
+//   }
+//   return;
+// Rejoin data in a single vector
+// const size_t total_nb_match = std::accumulate(nb_matches.begin(), nb_matches.end(), 0);
+//
+// this->m_ids_row.resize(total_nb_match);
+// this->m_ids_col.resize(total_nb_match);
+// this->m_dists.resize(total_nb_match);
+//
+// size_t d = 0;
+// for (size_t i = 0; i < n_points; ++i) {
+//   const size_t nb_match = nb_matches[i];
+//   for (size_t j = 0; j < nb_match; ++j) {
+//     this->m_ids_row[d] = i;
+//     this->m_ids_col[d] = results_cols[i][j];
+//     this->m_dists[d] = results_dists[i][j];
+//     ++d;
+//   }
+// }
+// }
+
 template <typename num_t>
-void KDTree<num_t>::radius_neighbors_indptr_dists(
-    f_numpy_array_t array, num_t radius) {
-  // reset search results
-  this->m_ids_row.clear();
-  this->m_ids_col.clear();
-  this->m_dists.clear();
-
-  const auto mat = array.template unchecked<2>();
-  const num_t *query_data = mat.data(0, 0);
-  const size_t n_points = mat.shape(0);
-  const size_t dim = mat.shape(1);
-
-  const num_t search_radius = static_cast<num_t>(radius);
-  std::vector<std::pair<size_t, num_t>> ret_matches;
-  this->m_ids_row.resize(n_points+1);
-  this->m_ids_row[0] = 0;
-
-  for (size_t i = 0; i < n_points; i++) {
-    const size_t nMatches = index->radiusSearch(
-        &query_data[i * dim], search_radius, ret_matches, nanoflann::SearchParams());
-    this->m_ids_row[i+1] = this->m_ids_row[i] + nMatches;
-    for (size_t j = 0; j < nMatches; j++) {
-      this->m_ids_col.push_back(ret_matches[j].first);
-      this->m_dists.push_back(ret_matches[j].second);
-    }
-  }
-  return;
-}
-
-
-// to generate COO matrix
-template <typename num_t>
-void KDTree<num_t>::radius_neighbors_coo_dists(
-    f_numpy_array_t array, num_t radius) {
-  // reset search results
-  this->m_ids_row.clear();
-  this->m_ids_col.clear();
-  this->m_dists.clear();
-
-  const auto mat = array.template unchecked<2>();
-  const num_t *query_data = mat.data(0, 0);
-  const size_t n_points = mat.shape(0);
-  const size_t dim = mat.shape(1);
-
-  const num_t search_radius = static_cast<num_t>(radius);
-  std::vector<std::pair<size_t, num_t>> ret_matches;
-
-  for (size_t i = 0; i < n_points; i++) {
-    const size_t nMatches = index->radiusSearch(
-        &query_data[i * dim], search_radius, ret_matches, nanoflann::SearchParams());
-    for (size_t j = 0; j < nMatches; j++) {
-      this->m_ids_row.push_back(i);
-      this->m_ids_col.push_back(ret_matches[j].first);
-      this->m_dists.push_back(ret_matches[j].second);
-    }
-  }
-  return;
-}
-
-template <typename num_t>
-void KDTree<num_t>::radius_neighbors_coo_dists_multithreaded(
+void KDTree<num_t>::radius_neighbors_idx_multithreaded(
     f_numpy_array_t array, num_t radius, size_t nThreads) {
   // reset search results
-  this->m_ids_row.clear();
-  this->m_ids_col.clear();
+
+  const auto mat = array.template unchecked<2>();
+  const num_t *query_data = mat.data(0, 0);
+  const size_t n_points = mat.shape(0);
+  const size_t dim = mat.shape(1);
+
+  const num_t search_radius = static_cast<num_t>(radius);
+
+  this->m_nbmatches.resize(n_points);
+  this->m_indices.resize(n_points);
+  this->m_dists.clear();
+
+  auto searchBatch = [&](size_t startIdx, size_t endIdx) {
+    for (size_t i = startIdx; i < endIdx; i++) {
+      this->m_nbmatches[i] = index->radiusSearchIdx(
+          &query_data[i * dim], search_radius, this->m_indices[i], nanoflann::SearchParams());
+    }
+  };
+
+  std::vector<std::thread> threadPool;
+  size_t batchSize = std::ceil(static_cast<float>(n_points) / nThreads);
+  for (size_t i = 0; i < nThreads; i++) {
+    size_t startIdx = i * batchSize;
+    size_t endIdx = (i + 1) * batchSize;
+    endIdx = std::min(endIdx, n_points);
+    threadPool.push_back(std::thread(searchBatch, startIdx, endIdx));
+  }
+  for (auto &t : threadPool) {
+    t.join();
+  }
+
+  return;
+}
+
+
+template <typename num_t>
+void KDTree<num_t>::radius_neighbors_idx_dists_multithreaded(
+    f_numpy_array_t array, num_t radius, size_t nThreads) {
+  // reset search results
 
   const auto mat = array.template unchecked<2>();
   const num_t *query_data = mat.data(0, 0);
@@ -548,22 +628,21 @@ void KDTree<num_t>::radius_neighbors_coo_dists_multithreaded(
   const num_t search_radius = static_cast<num_t>(radius);
   std::vector<std::pair<size_t, num_t>> ret_matches;
 
-  std::vector<size_t> nb_matches(n_points);
-  std::vector<std::vector<size_t>> results_cols(n_points);
-  std::vector<std::vector<num_t>> results_dists(n_points);
-
+  this->m_nbmatches.resize(n_points);
+  this->m_indices.resize(n_points);
+  this->m_dists.resize(n_points);
 
   auto searchBatch = [&](size_t startIdx, size_t endIdx) {
     std::vector<std::pair<size_t, num_t>> ret_matches;
     for (size_t i = startIdx; i < endIdx; i++) {
       const size_t nb_match = index->radiusSearch(&query_data[i * dim], search_radius, ret_matches, nanoflann::SearchParams());
 
-      nb_matches[i] = nb_match;
-      results_cols[i].resize(nb_match);
-      results_dists[i].resize(nb_match);
+      this->m_nbmatches[i] = nb_match;
+      this->m_indices[i].resize(nb_match);
+      this->m_dists[i].resize(nb_match);
       for (size_t j = 0; j < nb_match; j++) {
-        results_cols[i][j] = ret_matches[j].first;
-        results_dists[i][j] = ret_matches[j].second;
+        this->m_indices[i][j] = ret_matches[j].first;
+        this->m_dists[i][j] = ret_matches[j].second;
       }
     }
   };
@@ -578,80 +657,14 @@ void KDTree<num_t>::radius_neighbors_coo_dists_multithreaded(
   }
   for (auto &t : threadPool) {
     t.join();
-  }
-  // Rejoin data in a single vector
-  const size_t total_nb_match = std::accumulate(nb_matches.begin(), nb_matches.end(), 0);
-
-  this->m_ids_row.resize(total_nb_match);
-  this->m_ids_col.resize(total_nb_match);
-  this->m_dists.resize(total_nb_match);
-
-  size_t d = 0;
-  for (size_t i = 0; i < n_points; ++i) {
-    const size_t nb_match = nb_matches[i];
-    for (size_t j = 0; j < nb_match; ++j) {
-      this->m_ids_row[d] = i;
-      this->m_ids_col[d] = results_cols[i][j];
-      this->m_dists[d] = results_dists[i][j];
-      ++d;
-    }
   }
 
   return;
 }
 
 template <typename num_t>
-std::pair<std::vector<std::vector<num_t>>, vvi>
-KDTree<num_t>::radius_neighbors_multithreaded(f_numpy_array_t array,
-                                              num_t radius, size_t nThreads) {
-  auto mat = array.template unchecked<2>();
-  const num_t *query_data = mat.data(0, 0);
-  size_t n_points = mat.shape(0);
-  size_t dim = mat.shape(1);
-  const num_t search_radius = static_cast<num_t>(radius);
-
-  std::vector<std::vector<num_t>> results_dists(n_points);
-  std::vector<std::vector<size_t>> results_idxs(n_points);
-
-  auto searchBatch = [&](size_t startIdx, size_t endIdx) {
-    std::vector<std::pair<size_t, num_t>> ret_matches;
-    const num_t *query_point;
-
-    for (size_t i = startIdx; i < endIdx; i++) {
-      query_point = &query_data[i * dim];
-      const size_t nMatches =
-          index->radiusSearch(&query_point[0], search_radius, ret_matches,
-                              nanoflann::SearchParams());
-
-      for (size_t j = 0; j < nMatches; j++) {
-        results_idxs[i].push_back(ret_matches[j].first);
-        results_dists[i].push_back(ret_matches[j].second);
-      }
-    }
-  };
-
-  std::vector<std::thread> threadPool;
-  size_t batchSize = std::ceil(static_cast<float>(n_points) / nThreads);
-  for (size_t i = 0; i < nThreads; i++) {
-    size_t startIdx = i * batchSize;
-    size_t endIdx = (i + 1) * batchSize;
-    endIdx = std::min(endIdx, n_points);
-    threadPool.push_back(std::thread(searchBatch, startIdx, endIdx));
-  }
-  for (auto &t : threadPool) {
-    t.join();
-  }
-
-  // TODO Copy will be made
-  return std::make_pair(results_dists, results_idxs);
-}
-
-template <typename num_t>
-std::pair<pybind11::array_t<num_t, pybind11::array::c_style |
-                                       pybind11::array::forcecast>,
-          i_numpy_array_t>
-KDTree<num_t>::kneighbors_multithreaded(f_numpy_array_t array,
-                                        size_t n_neighbors, size_t nThreads) {
+std::pair<pybind11::array_t<num_t, pybind11::array::c_style | pybind11::array::forcecast>, i_numpy_array_t>
+KDTree<num_t>::kneighbors_multithreaded(f_numpy_array_t array, size_t n_neighbors, size_t nThreads) {
   auto mat = array.template unchecked<2>();
   const num_t *query_data = mat.data(0, 0);
   size_t n_points = mat.shape(0);
@@ -660,10 +673,8 @@ KDTree<num_t>::kneighbors_multithreaded(f_numpy_array_t array,
   f_numpy_array_t results_dists({n_points, n_neighbors});
   i_numpy_array_t results_idxs({n_points, n_neighbors});
 
-  num_t *res_dis_data =
-      results_dists.template mutable_unchecked<2>().mutable_data(0, 0);
-  size_t *res_idx_data =
-      results_idxs.template mutable_unchecked<2>().mutable_data(0, 0);
+  num_t *res_dis_data = results_dists.template mutable_unchecked<2>().mutable_data(0, 0);
+  size_t *res_idx_data = results_idxs.template mutable_unchecked<2>().mutable_data(0, 0);
 
   auto searchBatch = [&](size_t startIdx, size_t endIdx) {
     for (size_t i = startIdx; i < endIdx; i++) {
@@ -771,18 +782,16 @@ PYBIND11_MODULE(nanoflann_ext, m) {
       .def("fit", &KDTree<float>::fit)
       .def("kneighbors", &KDTree<float>::kneighbors)
       .def("kneighbors_multithreaded", &KDTree<float>::kneighbors_multithreaded)
-      .def("radius_neighbors", &KDTree<float>::radius_neighbors)
       .def("radius_neighbors_idx", &KDTree<float>::radius_neighbors_idx)
       .def("radius_neighbors_idx_dists", &KDTree<float>::radius_neighbors_idx_dists)
-      .def("radius_neighbors_indptr_dists", &KDTree<float>::radius_neighbors_indptr_dists)
-      .def("radius_neighbors_coo_dists", &KDTree<float>::radius_neighbors_coo_dists)
-      .def("radius_neighbors_coo_dists_multithreaded", &KDTree<float>::radius_neighbors_coo_dists_multithreaded)
-      .def("radius_neighbors_multithreaded",
-           &KDTree<float>::radius_neighbors_multithreaded)
-      .def("save_index", &KDTree<float>::save_index)
+      .def("radius_neighbors_idx_multithreaded", &KDTree<float>::radius_neighbors_idx_multithreaded)
+      .def("radius_neighbors_idx_dists_multithreaded", &KDTree<float>::radius_neighbors_idx_dists_multithreaded)
+      .def("getResultLenghts", &KDTree<float>::getResultLenghts)
+      .def("getResultIndicesPtr", &KDTree<float>::getResultIndicesPtr)
       .def("getResultIndicesRow", &KDTree<float>::getResultIndicesRow)
       .def("getResultIndicesCol", &KDTree<float>::getResultIndicesCol)
-      .def("getResultDists", &KDTree<float>::getResultDists);
+      .def("getResultDists", &KDTree<float>::getResultDists)
+      .def("save_index", &KDTree<float>::save_index);
 
   pybind11::class_<KDTree<double>>(m, "KDTree64")
       .def(pybind11::init<size_t, size_t, std::string, float>())
@@ -790,18 +799,16 @@ PYBIND11_MODULE(nanoflann_ext, m) {
       .def("kneighbors", &KDTree<double>::kneighbors)
       .def("kneighbors_multithreaded",
            &KDTree<double>::kneighbors_multithreaded)
-      .def("radius_neighbors", &KDTree<double>::radius_neighbors)
       .def("radius_neighbors_idx", &KDTree<double>::radius_neighbors_idx)
       .def("radius_neighbors_idx_dists", &KDTree<double>::radius_neighbors_idx_dists)
-      .def("radius_neighbors_indptr_dists", &KDTree<double>::radius_neighbors_indptr_dists)
-      .def("radius_neighbors_coo_dists", &KDTree<double>::radius_neighbors_coo_dists)
-      .def("radius_neighbors_coo_dists_multithreaded", &KDTree<double>::radius_neighbors_coo_dists_multithreaded)
-      .def("radius_neighbors_multithreaded",
-           &KDTree<double>::radius_neighbors_multithreaded)
-      .def("save_index", &KDTree<double>::save_index)
+      .def("radius_neighbors_idx_multithreaded", &KDTree<double>::radius_neighbors_idx_multithreaded)
+      .def("radius_neighbors_idx_dists_multithreaded", &KDTree<double>::radius_neighbors_idx_dists_multithreaded)
+      .def("getResultLenghts", &KDTree<double>::getResultLenghts)
+      .def("getResultIndicesPtr", &KDTree<double>::getResultIndicesPtr)
       .def("getResultIndicesRow", &KDTree<double>::getResultIndicesRow)
       .def("getResultIndicesCol", &KDTree<double>::getResultIndicesCol)
-      .def("getResultDists", &KDTree<double>::getResultDists);
+      .def("getResultDists", &KDTree<double>::getResultDists)
+      .def("save_index", &KDTree<double>::save_index);
 
   m.def("batched_kneighbors32", &batched_kneighbors<float>,
         "Fit & query multiple independent kd-trees");

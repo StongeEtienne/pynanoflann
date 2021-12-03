@@ -75,17 +75,22 @@ namespace nanoflann {
 /** @addtogroup nanoflann_grp nanoflann C++ library for ANN
  *  @{ */
 
+
+
+ #define M_DIM (size_t)2
+
 /** the PI constant (required to avoid MSVC missing symbols) */
 template <typename T> T pi_const() {
   return static_cast<T>(3.14159265358979323846);
 }
 
+template <typename T> T sqrt3inv() {
+  return static_cast<T>(0.577350269);
+}
 
-/** Static dimension change for a L21_MD dostance */
-#define M_DIM (size_t)2
-#define SQRT3_INV 0.577350269
-
-const float SQRTM_INV=1.0/std::sqrt((float)M_DIM);
+template <typename T> T sqrtMinv() {
+  return static_cast<T>(1.0) / std::sqrt(static_cast<T>(M_DIM));
+}
 
 
 /**
@@ -665,7 +670,7 @@ struct L21_MD_Adaptor {
 
   template <typename U, typename V>
   inline DistanceType accum_dist(const U a, const V b, const size_t) const {
-    return std::abs((a - b) * SQRTM_INV) ;
+    return std::abs(a - b) * sqrtMinv<DistanceType>();
   }
 };
 
@@ -734,7 +739,7 @@ struct L21_MD_Adaptor {
 
   template <typename U, typename V>
   inline DistanceType accum_dist(const U a, const V b, const size_t) const {
-    return std::abs((a - b) * 0.57735);
+    return std::abs(a - b) * sqrt3inv<DistanceType>();
   }
 };
 
@@ -795,7 +800,7 @@ struct L21_3D_Adaptor_row {
 
  template <typename U, typename V>
  inline DistanceType accum_dist(const U a, const V b, const size_t) const {
-   return std::abs((a - b) * 0.57735);
+   return std::abs(a - b) * sqrt3inv<DistanceType>();
  }
 };
 
